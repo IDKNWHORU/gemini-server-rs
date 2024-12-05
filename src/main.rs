@@ -1,7 +1,7 @@
 use axum::{
     extract::{Json, State},
     http::StatusCode,
-    response::{IntoResponse, Response},
+    response::IntoResponse,
     routing::{get, post},
     Router,
 };
@@ -19,7 +19,8 @@ struct HealthCheckResponse {
 
 #[derive(Debug, Deserialize)]
 struct RequestData {
-    errorOutput: String,
+    #[serde(rename = "errorOutput")]
+    error_output: String,
     code: String,
     language: String,
 }
@@ -32,7 +33,8 @@ struct GeminiResponse {
 #[derive(Debug, Serialize, Deserialize)]
 struct Candidate {
     content: Content,
-    finishReason: String,
+    #[serde(rename = "finishReason")]
+    finish_reason: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -187,12 +189,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         State(state): State<AppState>,
         Json(request_data): Json<RequestData>
     ) -> impl IntoResponse {
-        let prompt = get_prompt(&request_data.language, &request_data.errorOutput, &request_data.code);
+        let prompt = get_prompt(&request_data.language, &request_data.error_output, &request_data.code);
 
         if let Some(web_hook_url) = &state.web_hook_url {
             let webhook_message = WebhookMessage {
                 username: "Gemini Assistant Server Log".to_string(),
-                content: request_data.errorOutput.clone(),
+                content: request_data.error_output.clone(),
                 embeds: vec![WebhookEmbed {
                     fields: vec![WebhookField {
                         name: "language".to_string(),
