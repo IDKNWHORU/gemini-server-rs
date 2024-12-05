@@ -51,9 +51,28 @@ struct ErrorResponse {
     message: String,
 }
 
+#[derive(Debug, Serialize)]
+struct WebhookMessage {
+    username: String,
+    content: String,
+    embeds: Vec<WebhookEmbed>,
+}
+
+#[derive(Debug, Serialize)]
+struct WebhookEmbed {
+    fields: Vec<WebhookField>,
+}
+
+#[derive(Debug, Serialize)]
+struct WebhookField {
+    name: String,
+    value: String,
+}
+
 #[derive(Clone)]
 struct AppState {
     api_key: String,
+    web_hook_url: Option<String>,
     client: Client,
 }
 
@@ -147,8 +166,11 @@ fn get_prompt(language: &str, error_output: &str, code: &str) -> String {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
     let api_key = env::var("API_KEY").expect("API_KEY must be set");
+    let web_hook_url = env::var("WEB_HOOK_URL").ok();
+
     let app_state = AppState {
         api_key,
+        web_hook_url,
         client: Client::new(),
     };
 
@@ -166,6 +188,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Json(request_data): Json<RequestData>
     ) -> impl IntoResponse {
         let prompt = get_prompt(&request_data.language, &request_data.errorOutput, &request_data.code);
+
+        if let Some(web_hook_url) = &state.web_hook_url {
+            let webhook_message = WebhookMessage {
+                username: "Gemini Assistant Server Log".to_string(),
+                content: request_data.errorOutput.clone(),
+                embeds: vec![WebhookEmbed {
+                    fields: vec![WebhookField {
+                        name: "language".to_string(),
+                        value: request_data.language.clone(),
+                    }],
+                }],
+            };
+
+            let webhook_result = state
+                .client
+                .post(web_hook_url)
+                .header(header::CONTENT_TYPE, "application/json")
+                .json(&webhook_message)
+                .send()
+                .await;
+
+            if let Err(e) = webhook_result {
+                eprintln!("Webhook error: {}", e);
+            }
+        }
 
         let gemini_url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-002:generateContent?key={}",
@@ -185,12 +232,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
 
         let gemini_response = state
-        .client
-        .post(&gemini_url)
-        .header(header::CONTENT_TYPE, "application/json")
-        .json(&gemini_request_body)
-        .send()
-        .await;
+            .client
+            .post(&gemini_url)
+            .header(header::CONTENT_TYPE, "application/json")
+            .json(&gemini_request_body)
+            .send()
+            .await;
 
         match gemini_response {
             Ok(res) => {
@@ -232,6 +279,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .unwrap_or("Unknown Message")
                         .to_string();
 
+                    if let Some(web_hook_url) = &state.web_hook_url {
+                        let webhook_error_message = WebhookMessage {
+                            username: "Gemini Assitant Server Log".to_string(),
+                            content: format!("🚨 **ERROR** 🚨\n```code: {}\n, message: {}\n, status: {}\n```", code, message, status),
+                            embeds: vec![],
+                        };
+
+                        let webhook_result = state
+                            .client
+                            .post(web_hook_url)
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .json(&webhook_error_message)
+                            .send()
+                            .await;
+
+                        if let Err(e) = webhook_result {
+                            eprintln!("Webhook error (in error handling): {}", e);
+                        }
+                    }
+
                     let error_response = ErrorResponse {
                         message: format!("code: {}\n, message: {}\n, status: {}", code, message, status),
                     };
@@ -239,6 +306,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             Err(e) => {
+                if let Some(web_hook_url) = &state.web_hook_url {
+                    let webhook_error_message = WebhookMessage {
+                        username: "Gemini Assistant Server Error Log".to_string(),
+                        content: format!("🚨 **ERROR** 🚨\n```{}```", e),
+                        embeds: vec![],
+                    };
+
+                    let webhook_result = state
+                        .client
+                        .post(web_hook_url)
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .json(&webhook_error_message)
+                        .send()
+                        .await;
+
+                    if let Err(e) = webhook_result {
+                        eprintln!("Webhook error (in error handling): {}", e);
+                    }
+                }
                 let error_response = ErrorResponse {
                     message: format!("Request error: {}", e),
                 };
