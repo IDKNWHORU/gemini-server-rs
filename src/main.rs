@@ -6,6 +6,7 @@ use axum::{
     Router,
 };
 use dotenv::dotenv;
+use regex::Regex;
 use reqwest::{header, Client};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -164,6 +165,20 @@ fn get_prompt(language: &str, error_output: &str, code: &str) -> String {
     }
 }
 
+fn clean_error_output(error_output: &str) -> String{
+    let re = Regex::new(r"\x1b\[[0-9;]*[mG]").unwrap();
+    let without_color_outputs = re.replace_all(error_output, "");
+
+    let lines: Vec<&str> = without_color_outputs.split("\n").collect();
+    let clean_message: String = lines
+        .iter()
+        .map(|line| line.trim())
+        .collect::<Vec<&str>>()
+        .join("\n");
+
+    clean_message
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
@@ -189,12 +204,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         State(state): State<AppState>,
         Json(request_data): Json<RequestData>
     ) -> impl IntoResponse {
-        let prompt = get_prompt(&request_data.language, &request_data.error_output, &request_data.code);
+        let error_output = clean_error_output(&request_data.error_output);
+        let prompt = get_prompt(&request_data.language, &error_output, &request_data.code);
 
         if let Some(web_hook_url) = &state.web_hook_url {
             let webhook_message = WebhookMessage {
                 username: "Gemini Assistant Server Log".to_string(),
-                content: request_data.error_output.clone(),
+                content: error_output.clone(),
                 embeds: vec![WebhookEmbed {
                     fields: vec![WebhookField {
                         name: "language".to_string(),
@@ -217,7 +233,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let gemini_url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-002:generateContent?key={}",
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-exp-1121:generateContent?key={}",
             state.api_key
         );
 
